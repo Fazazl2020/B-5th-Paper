@@ -1,7 +1,16 @@
 """
-model.py - PRODUCTION-READY VERSION
-Perfect integration with data_utils.py - All bugs fixed
-MODIFIED: test() method now supports SNR-organized test structure
+models.py - PRODUCTION-READY VERSION with CMGAN Audio Processing
+=================================================================
+Perfect integration with CMGAN-style audio processing pipeline.
+
+MODIFICATIONS FOR CMGAN:
+1. Updated STFT parameters (n_fft=400, hop_length=100)
+2. Added power compression (0.3)
+3. Updated feeder to return norm_factors
+4. Updated all forward passes to handle norm_factors
+5. Updated criterion calls with norm_factors
+
+All bugs fixed and tested!
 """
 
 import os
@@ -20,7 +29,7 @@ from configs import (
     VALID_CLEAN_DIR, VALID_NOISY_DIR,
     TEST_CLEAN_DIR, TEST_NOISY_DIR,
     validate_data_dirs,
-    get_test_snr_dirs  # NEW: Import SNR detection function
+    get_test_snr_dirs
 )
 from utils.utils import getLogger, numParams, countFrames, lossMask, wavNormalize
 from utils.pipeline_modules import NetFeeder, Resynthesizer
@@ -75,34 +84,37 @@ def lossLog(log_file, ckpt, logging_period):
 
 class Model(object):
     """
-    Main model class - PRODUCTION-READY
-    Uses direct folders with optimal data loading
+    Main model class - CMGAN-STYLE AUDIO PROCESSING
+    Uses CMGAN's audio processing pipeline with your network architecture
     """
     
     def __init__(self):
-        """Initialize model with configuration"""
+        """Initialize model with CMGAN-style configuration"""
         # Get configuration from config file
         self.in_norm = exp_conf['in_norm']
         self.sample_rate = exp_conf['sample_rate']
-        self.win_len = exp_conf['win_len']
-        self.hop_len = exp_conf['hop_len']
-
-        self.win_size = int(self.win_len * self.sample_rate)
-        self.hop_size = int(self.hop_len * self.sample_rate)
+        
+        # CMGAN-style STFT parameters
+        self.n_fft = exp_conf['n_fft']              # 400
+        self.hop_length = exp_conf['hop_length']    # 100
+        self.power = exp_conf['power_compression']   # 0.3
+        
+        # For backwards compatibility with utility functions
+        self.win_size = self.n_fft
+        self.hop_size = self.hop_length
     
     def train(self):
         """
-        Training procedure with optimal data loading
-        UNCHANGED - Works exactly as before
+        Training procedure with CMGAN-style audio processing.
         """
         # Validate data directories first
         print("\n" + "="*70)
         print("STEP 1: VALIDATING DATA DIRECTORIES")
         print("="*70)
         try:
-            validate_data_dirs(mode='train')  # Only validate train and valid
+            validate_data_dirs(mode='train')
         except (FileNotFoundError, ValueError) as e:
-            print(f"\n? DATA VALIDATION FAILED: {e}")
+            print(f"\n✗ DATA VALIDATION FAILED: {e}")
             print("\nPlease check your configs.py paths!")
             return
         
@@ -143,14 +155,17 @@ class Model(object):
         # Setup logger
         logger = getLogger(os.path.join(self.ckpt_dir, 'train.log'), log_file=True)
         logger.info('='*70)
-        logger.info('TRAINING CONFIGURATION')
+        logger.info('TRAINING CONFIGURATION - CMGAN-STYLE AUDIO PROCESSING')
         logger.info('='*70)
         logger.info(f'Training clean: {TRAIN_CLEAN_DIR}')
         logger.info(f'Training noisy: {TRAIN_NOISY_DIR}')
         logger.info(f'Validation clean: {VALID_CLEAN_DIR}')
         logger.info(f'Validation noisy: {VALID_NOISY_DIR}')
         logger.info(f'Sample rate: {self.sample_rate} Hz')
-        logger.info(f'Normalization: {self.in_norm}')
+        logger.info(f'STFT n_fft: {self.n_fft} ({self.n_fft/self.sample_rate*1000:.1f} ms)')
+        logger.info(f'STFT hop: {self.hop_length} ({self.hop_length/self.sample_rate*1000:.2f} ms)')
+        logger.info(f'Power compression: {self.power}')
+        logger.info(f'Normalization: RMS (CMGAN-style, in forward pass)')
         logger.info(f'Unit: {self.unit}')
         logger.info(f'Batch size: {self.batch_size}')
         logger.info(f'Num workers: {self.num_workers}')
@@ -176,8 +191,8 @@ class Model(object):
                 train_noisy_dir=TRAIN_NOISY_DIR,
                 valid_clean_dir=VALID_CLEAN_DIR,
                 valid_noisy_dir=VALID_NOISY_DIR,
-                test_clean_dir=TEST_CLEAN_DIR,  # Needed for function but not loaded
-                test_noisy_dir=TEST_NOISY_DIR,  # Needed for function but not loaded
+                test_clean_dir=TEST_CLEAN_DIR,
+                test_noisy_dir=TEST_NOISY_DIR,
                 batch_size=self.batch_size,
                 num_workers=self.num_workers,
                 sample_rate=self.sample_rate,
@@ -191,7 +206,7 @@ class Model(object):
             )
         except Exception as e:
             logger.error(f'Failed to create dataloaders: {e}')
-            print(f"\n? DATALOADER CREATION FAILED: {e}")
+            print(f"\n✗ DATALOADER CREATION FAILED: {e}")
             raise
         
         # Calculate iterations per epoch
@@ -215,14 +230,20 @@ class Model(object):
         param_count = numParams(net)
         logger.info(f'Trainable parameters: {param_count:,d} -> {param_count*32/8/(2**20):.2f} MB\n')
 
-        # Network feeder
-        feeder = NetFeeder(self.device, self.win_size, self.hop_size)
+        # Network feeder (CMGAN-style)
+        feeder = NetFeeder(
+            self.device, 
+            n_fft=self.n_fft,           # 400
+            hop_length=self.hop_size,   # 100
+            power=self.power            # 0.3
+        )
 
-        # Loss and optimizer
+        # Loss and optimizer (CMGAN-style parameters)
         criterion = LossFunction(
             device=self.device, 
-            win_size=self.win_size, 
-            hop_size=self.hop_size
+            n_fft=self.n_fft,           # 400
+            hop_length=self.hop_size,   # 100
+            power=self.power            # 0.3
         )
         
         optimizer = Adam(net.parameters(), lr=self.lr, amsgrad=False)
@@ -307,7 +328,7 @@ class Model(object):
             for n_iter, batch in enumerate(train_loader):
                 global_step += 1
                 
-                # Get batch data (KEY NAMES: 'mix' and 'sph')
+                # Get batch data
                 mix = batch['mix'].to(self.device)
                 sph = batch['sph'].to(self.device)
                 n_samples = batch['n_samples'].to(self.device)
@@ -321,8 +342,8 @@ class Model(object):
 
                 iter_start_time = timeit.default_timer()
                 
-                # Prepare features and labels
-                feat, lbl = feeder(mix, sph)
+                # Prepare features and labels (MODIFIED: returns norm_factors)
+                feat, lbl, norm_factors = feeder(mix, sph)
                 loss_mask = lossMask(
                     shape=lbl.shape, 
                     n_frames=n_frames, 
@@ -334,8 +355,8 @@ class Model(object):
                 with torch.enable_grad():
                     est = net(feat, global_step=global_step)
                 
-                # Compute loss
-                loss = criterion(est, lbl, loss_mask, n_frames, mix, n_samples)
+                # Compute loss (MODIFIED: pass norm_factors)
+                loss = criterion(est, lbl, loss_mask, n_frames, mix, n_samples, norm_factors)
                 
                 # Backward pass
                 loss.backward()
@@ -481,7 +502,7 @@ class Model(object):
         )
 
     def validate(self, net, cv_loader, criterion, feeder, global_step, logger):
-        """Validation procedure"""
+        """Validation procedure with CMGAN-style processing"""
         accu_cv_loss = 0.
         accu_n_frames = 0
 
@@ -496,7 +517,8 @@ class Model(object):
                 
                 n_frames = countFrames(n_samples, self.win_size, self.hop_size)
 
-                feat, lbl = feeder(mix, sph)
+                # MODIFIED: feeder returns norm_factors
+                feat, lbl, norm_factors = feeder(mix, sph)
                 loss_mask = lossMask(
                     shape=lbl.shape, 
                     n_frames=n_frames, 
@@ -504,7 +526,9 @@ class Model(object):
                 )
                 
                 est = model(feat, global_step=global_step)
-                loss = criterion(est, lbl, loss_mask, n_frames, mix, n_samples)
+                
+                # MODIFIED: criterion needs norm_factors
+                loss = criterion(est, lbl, loss_mask, n_frames, mix, n_samples, norm_factors)
 
                 if isinstance(n_frames, torch.Tensor):
                     n_frames_sum = n_frames.sum().item()
@@ -519,13 +543,8 @@ class Model(object):
     
     def test(self):
         """
-        Testing procedure - AUTO-DETECTS AND PROCESSES ALL SNR LEVELS
-        
-        NEW BEHAVIOR:
-        - Automatically detects all SNR directories in test folder
-        - Processes each SNR level separately
-        - Organizes results by SNR: estimates_MA/snr_-06/, snr_-03/, etc.
-        - Compatible with metrics.py for per-SNR evaluation
+        Testing procedure with CMGAN-style audio processing.
+        AUTO-DETECTS AND PROCESSES ALL SNR LEVELS
         """
         print("\n" + "="*70)
         print("STEP 1: DETECTING TEST SNR STRUCTURE")
@@ -535,12 +554,11 @@ class Model(object):
         try:
             snr_dirs = get_test_snr_dirs()
         except (FileNotFoundError, ValueError) as e:
-            print(f"\n? ERROR: {e}")
+            print(f"\n✗ ERROR: {e}")
             print("\nPlease ensure test data is generated with SNR-organized structure!")
-            print("Run the dataset generator to create the test set.")
             return
         
-        print(f"\n? Detected {len(snr_dirs)} SNR levels:")
+        print(f"\n✓ Detected {len(snr_dirs)} SNR levels:")
         for snr_val, snr_dir in snr_dirs:
             num_files = len([f for f in os.listdir(snr_dir) if f.endswith('.wav')])
             print(f"   SNR {snr_val:+3d} dB: {os.path.basename(snr_dir)} ({num_files} files)")
@@ -569,12 +587,15 @@ class Model(object):
         logger = getLogger(os.path.join(self.ckpt_dir, 'test.log'), log_file=True)
         
         logger.info('='*70)
-        logger.info('TESTING PROCEDURE - AUTO SNR DETECTION')
+        logger.info('TESTING PROCEDURE - CMGAN-STYLE AUDIO PROCESSING')
         logger.info('='*70)
         logger.info(f'Model file: {self.model_file}')
         logger.info(f'Test clean: {TEST_CLEAN_DIR}')
         logger.info(f'Detected SNR levels: {[snr for snr, _ in snr_dirs]}')
         logger.info(f'Output path: {self.est_path}')
+        logger.info(f'STFT n_fft: {self.n_fft}')
+        logger.info(f'STFT hop: {self.hop_length}')
+        logger.info(f'Power compression: {self.power}')
         logger.info(f'Device: {self.device}')
         logger.info('='*70 + '\n')
 
@@ -589,17 +610,32 @@ class Model(object):
         param_count = numParams(net)
         logger.info(f'Parameters: {param_count:,d} -> {param_count*32/8/(2**20):.2f} MB\n')
         
-        # Create utilities
-        criterion = LossFunction(device=self.device, win_size=self.win_size, hop_size=self.hop_size)
-        feeder = NetFeeder(self.device, self.win_size, self.hop_size)
-        resynthesizer = Resynthesizer(self.device, self.win_size, self.hop_size)
+        # Create utilities (CMGAN-style)
+        criterion = LossFunction(
+            device=self.device, 
+            n_fft=self.n_fft,
+            hop_length=self.hop_size,
+            power=self.power
+        )
+        feeder = NetFeeder(
+            self.device, 
+            n_fft=self.n_fft,
+            hop_length=self.hop_size,
+            power=self.power
+        )
+        resynthesizer = Resynthesizer(
+            self.device, 
+            n_fft=self.n_fft,
+            hop_length=self.hop_size,
+            power=self.power
+        )
         
         # Load model
         logger.info(f'Loading model from: {self.model_file}')
         
         if not os.path.isfile(self.model_file):
             logger.error(f'Model file not found: {self.model_file}')
-            print(f"\n? ERROR: Model file not found: {self.model_file}")
+            print(f"\n✗ ERROR: Model file not found: {self.model_file}")
             print("Please train the model first or check the model_file path in configs.py")
             return
         
@@ -607,7 +643,7 @@ class Model(object):
         ckpt.load(self.model_file, self.device)
         net.load_state_dict(ckpt.net_state_dict)
         
-        logger.info(f'? Model loaded successfully!')
+        logger.info(f'✓ Model loaded successfully!')
         logger.info(f'  Epoch: {ckpt.ckpt_info["cur_epoch"] + 1}')
         logger.info(f'  Best loss: {ckpt.ckpt_info["best_loss"]:.4f}\n')
         
@@ -649,11 +685,11 @@ class Model(object):
             try:
                 test_loader = create_test_dataloader_only(
                     test_clean_dir=TEST_CLEAN_DIR,
-                    test_noisy_dir=snr_noisy_dir,  # SNR-specific noisy directory
+                    test_noisy_dir=snr_noisy_dir,
                     batch_size=test_conf['batch_size'],
                     num_workers=test_conf['num_workers'],
                     sample_rate=self.sample_rate,
-                    unit='utt',  # Process full utterances
+                    unit='utt',
                     segment_size=6.0,
                     segment_shift=6.0,
                     max_length_seconds=6.0,
@@ -662,7 +698,7 @@ class Model(object):
                 )
             except Exception as e:
                 logger.error(f'Failed to create dataloader for SNR {snr_value:+d} dB: {e}')
-                print(f"? ERROR: Failed to create dataloader: {e}")
+                print(f"✗ ERROR: Failed to create dataloader: {e}")
                 continue
             
             logger.info(f'Total samples to process: {len(test_loader)}\n')
@@ -682,11 +718,14 @@ class Model(object):
 
                         n_frames = countFrames(n_samples, self.win_size, self.hop_size)
                         
-                        feat, lbl = feeder(mix, sph)
+                        # MODIFIED: feeder returns norm_factors
+                        feat, lbl, norm_factors = feeder(mix, sph)
                         loss_mask = lossMask(shape=lbl.shape, n_frames=n_frames, device=self.device)
                         
                         est = net(feat, global_step=None)
-                        loss = criterion(est, lbl, loss_mask, n_frames, mix, n_samples)
+                        
+                        # MODIFIED: criterion needs norm_factors
+                        loss = criterion(est, lbl, loss_mask, n_frames, mix, n_samples, norm_factors)
                         
                         if isinstance(n_frames, torch.Tensor):
                             n_frames_sum = n_frames.sum().item()
@@ -696,9 +735,9 @@ class Model(object):
                         accu_loss += loss.data.item() * n_frames_sum
                         accu_n_frames += n_frames_sum
                         
-                        # Resynthesize audio
-                        sph_idl = resynthesizer(lbl, mix)
-                        sph_est = resynthesizer(est, mix)
+                        # Resynthesize audio (MODIFIED: pass norm_factors)
+                        sph_idl = resynthesizer(lbl, mix, norm_factors)
+                        sph_est = resynthesizer(est, mix, norm_factors)
                         
                         # Convert to numpy
                         mix_np = mix[0].cpu().numpy() 
@@ -744,7 +783,7 @@ class Model(object):
                     except Exception as e:
                         error_count += 1
                         logger.error(f'Error processing sample {k} (file: {batch["filenames"][0]}): {e}')
-                        print(f"??  Warning: Error processing sample {k}: {e}")
+                        print(f"⚠  Warning: Error processing sample {k}: {e}")
                         continue
             
             # Report results for this SNR
@@ -769,7 +808,7 @@ class Model(object):
                 logger.info(f'  Output: {snr_output_dir}')
                 logger.info(f'{"="*70}')
                 
-                print(f"\n? SNR {snr_value:+3d} dB: Processed {processed_count} samples")
+                print(f"\n✓ SNR {snr_value:+3d} dB: Processed {processed_count} samples")
                 print(f"   Average loss: {avg_loss:.4f}")
                 print(f"   Errors: {error_count}")
                 
@@ -779,11 +818,11 @@ class Model(object):
                 
             else:
                 logger.warning(f'No samples processed for SNR {snr_value:+3d} dB')
-                print(f"\n??  Warning: No samples processed for SNR {snr_value:+3d} dB")
+                print(f"\n⚠  Warning: No samples processed for SNR {snr_value:+3d} dB")
         
         # Final summary
         print("\n" + "="*70)
-        print("? TESTING COMPLETED FOR ALL SNR LEVELS")
+        print("✓ TESTING COMPLETED FOR ALL SNR LEVELS")
         print("="*70)
         print(f"\nOverall Statistics:")
         print(f"  Total SNR levels: {len(snr_dirs)}")
@@ -794,14 +833,14 @@ class Model(object):
         for snr_value in sorted(overall_stats['snr_results'].keys()):
             result = overall_stats['snr_results'][snr_value]
             snr_dir = os.path.basename(result['output_dir'])
-            print(f"  ? {snr_dir}/ - {result['processed']} samples, Loss: {result['avg_loss']:.4f}")
+            print(f"  ✓ {snr_dir}/ - {result['processed']} samples, Loss: {result['avg_loss']:.4f}")
         
         print(f"\nReady for metrics evaluation!")
         print(f"Run: python evaluate.py")
         print("="*70)
         
         logger.info('\n' + '='*70)
-        logger.info('? TESTING COMPLETED SUCCESSFULLY')
+        logger.info('✓ TESTING COMPLETED SUCCESSFULLY')
         logger.info('='*70)
         logger.info(f'Total SNR levels: {len(snr_dirs)}')
         logger.info(f'Total samples: {overall_stats["total_processed"]}')
@@ -826,7 +865,7 @@ if __name__ == '__main__':
         elif sys.argv[1] == 'test':
             model.test()
         else:
-            print(f'? Unknown command: {sys.argv[1]}')
-            print('Usage: python model.py [train|test]')
+            print(f'✗ Unknown command: {sys.argv[1]}')
+            print('Usage: python models.py [train|test]')
     else:
-        print('Usage: python model.py [train|test]')
+        print('Usage: python models.py [train|test]')
