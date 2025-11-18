@@ -1,88 +1,86 @@
 """
 configs.py - Configuration for CMGAN-Style Audio Processing
-============================================================
 
 MODIFICATIONS FOR CMGAN AUDIO PROCESSING:
-1. STFT parameters: 400 window, 100 hop (was 320/160)
-2. Power compression: 0.3 exponent
-3. Segment size: 2.0 seconds (match CMGAN)
-4. Non-overlapping segments for training
+- STFT parameters: 320 window, 160 hop (matched to network architecture)
+- Power compression: 0.3 exponent
+- RMS normalization in forward pass
+- Audio repetition instead of zero padding
 
 COMPATIBILITY:
-- Kept old parameters (win_len, hop_len) for reference
-- New code uses n_fft and hop_length explicitly
+- Network designed for 161 frequency bins (n_fft=320 -> 320//2+1=161)
+- Using CMGAN's audio processing techniques with original network architecture
 """
-
 import os
 
 # ==================== EXPERIMENT CONFIGURATION ====================
 exp_conf = {
     # CMGAN-STYLE STFT PARAMETERS (PRIMARY)
-    'n_fft': 400,                  # FFT size: 400 samples = 25ms @ 16kHz
-    'hop_length': 100,             # Hop size: 100 samples = 6.25ms @ 16kHz
-    'power_compression': 0.3,      # Power compression exponent (CMGAN uses 0.3)
+    'n_fft': 320,              # FFT size: 320 samples = 20ms @ 16kHz (161 freq bins)
+    'hop_length': 160,         # Hop size: 160 samples = 10ms @ 16kHz
+    'power_compression': 0.3,  # Power compression exponent (CMGAN uses 0.3)
     
     # Legacy parameters (for reference, not used directly)
-    'win_len': 0.025,              # 25ms = 400 samples @ 16kHz
-    'hop_len': 0.00625,            # 6.25ms = 100 samples @ 16kHz
+    'win_len': 0.020,          # 20ms = 320 samples @ 16kHz
+    'hop_len': 0.010,          # 10ms = 160 samples @ 16kHz
     
     # Audio parameters
-    'sample_rate': 16000,          # 16 kHz sample rate
-    'in_norm': None,               # No normalization in dataloader (done in forward pass)
+    'sample_rate': 16000,      # 16 kHz sample rate
+    'in_norm': None,           # No normalization in dataloader (done in forward pass)
 }
 
 # ==================== TRAINING CONFIGURATION ====================
 train_conf = {
     # GPU settings
-    'gpu_ids': '0',                # GPU IDs to use (e.g., '0' or '0,1,2,3')
+    'gpu_ids': '0',  # GPU IDs to use (e.g., '0' or '0,1,2,3')
     
     # Checkpoint settings
-    'ckpt_dir': './checkpoints',   # Directory to save checkpoints
-    'est_path': './estimates_MA',  # Directory to save estimated audio during testing
-    'resume_model': '',            # Path to checkpoint to resume from (empty = train from scratch)
+    'ckpt_dir': '/ghome/fewahab/Sun-Models/Ab-5/M4/scripts/ckpt',  # Directory to save checkpoints
+    'est_path': '/gdata/fewahab/Sun-Models/Ab-5/M4/estimates_MA',  # Directory to save estimated audio during testing
+    'resume_model': '',  # Path to checkpoint to resume from (empty = train from scratch)
     
     # Optimizer settings
-    'lr': 1e-3,                    # Initial learning rate
-    'clip_norm': 5.0,              # Gradient clipping norm
+    'lr': 1e-3,         # Initial learning rate
+    'clip_norm': 5.0,   # Gradient clipping norm
     
     # Learning rate scheduler (ReduceLROnPlateau)
-    'plateau_factor': 0.5,         # Multiply LR by this when plateau
-    'plateau_patience': 3,         # Number of epochs with no improvement before reducing LR
-    'plateau_threshold': 0.001,    # Threshold for measuring improvement
-    'plateau_min_lr': 1e-6,        # Minimum learning rate
+    'plateau_factor': 0.5,      # Multiply LR by this when plateau
+    'plateau_patience': 3,      # Number of epochs with no improvement before reducing LR
+    'plateau_threshold': 0.001, # Threshold for measuring improvement
+    'plateau_min_lr': 1e-6,     # Minimum learning rate
     
     # Training duration
-    'max_n_epochs': 100,           # Maximum number of epochs
-    'early_stop_patience': 10,     # Stop if no improvement for this many epochs at min LR
+    'max_n_epochs': 100,        # Maximum number of epochs
+    'early_stop_patience': 10,  # Stop if no improvement for this many epochs at min LR
     
     # Data loading settings
-    'batch_size': 4,               # Batch size for training
-    'num_workers': 4,              # Number of parallel data loading workers
+    'batch_size': 4,      # Batch size for training
+    'num_workers': 4,     # Number of parallel data loading workers
     
     # Data processing mode
-    'unit': 'seg',                 # 'seg' = segment-based, 'utt' = utterance-based
-    'segment_size': 2.0,           # Segment duration in seconds (CMGAN uses 2.0)
-    'segment_shift': 2.0,          # Segment hop in seconds (2.0 = non-overlapping, like CMGAN)
-    'max_length_seconds': 6.0,     # Maximum audio length to process
+    'unit': 'seg',              # 'seg' = segment-based, 'utt' = utterance-based
+    'segment_size': 2.0,        # Segment duration in seconds (CMGAN uses 2.0)
+    'segment_shift': 2.0,       # Segment hop in seconds (2.0 = non-overlapping, like CMGAN)
+    'max_length_seconds': 6.0,  # Maximum audio length to process
     
     # Logging
-    'loss_log': 'loss.csv',        # CSV file to log training/validation loss
-    'time_log': None,              # Path to detailed timing log (None = print to console)
+    'loss_log': 'loss.csv',  # CSV file to log training/validation loss
+    'time_log': None,        # Path to detailed timing log (None = print to console)
 }
 
 # ==================== TEST CONFIGURATION ====================
 test_conf = {
     'model_file': './checkpoints/models/best.pt',  # Model checkpoint to use for testing
-    'batch_size': 1,               # Batch size for testing (usually 1)
-    'num_workers': 2,              # Number of data loading workers
-    'write_ideal': False,          # Whether to write ideal (analysis-synthesis) audio
+    'batch_size': 4,        # Batch size for testing (usually 1)
+    'num_workers': 2,       # Number of data loading workers
+    'write_ideal': False,   # Whether to write ideal (analysis-synthesis) audio
 }
 
 # ==================== DATA DIRECTORIES ====================
 # IMPORTANT: UPDATE THESE PATHS TO YOUR DATASET!
 
 # Base directory (modify this to your dataset location)
-BASE_DIR = '/path/to/your/dataset'
+BASE_DIR = '/gdata/fewahab/data/Voicebank+demand/My_train_valid_test'
 
 # Training data
 TRAIN_CLEAN_DIR = os.path.join(BASE_DIR, 'train', 'clean')
@@ -95,7 +93,6 @@ VALID_NOISY_DIR = os.path.join(BASE_DIR, 'valid', 'noisy')
 # Test data
 TEST_CLEAN_DIR = os.path.join(BASE_DIR, 'test', 'clean')
 TEST_NOISY_DIR = os.path.join(BASE_DIR, 'test', 'noisy')
-
 
 # ==================== VALIDATION FUNCTIONS ====================
 
@@ -134,7 +131,7 @@ def validate_data_dirs(mode='train'):
         if len(wav_files) == 0:
             raise ValueError(f"{name} directory contains no WAV files: {path}")
         
-        print(f"  ✓ {name}: {len(wav_files)} WAV files found")
+        print(f"  ? {name}: {len(wav_files)} WAV files found")
     
     print("All directories validated successfully!\n")
 
@@ -199,26 +196,26 @@ def print_config_summary():
     print("CONFIGURATION SUMMARY")
     print("="*70)
     print("\nAudio Processing (CMGAN-Style):")
-    print(f"  STFT window:      {exp_conf['n_fft']} samples ({exp_conf['n_fft']/exp_conf['sample_rate']*1000:.1f} ms)")
-    print(f"  STFT hop:         {exp_conf['hop_length']} samples ({exp_conf['hop_length']/exp_conf['sample_rate']*1000:.2f} ms)")
-    print(f"  Frequency bins:   {exp_conf['n_fft']//2 + 1}")
-    print(f"  Sample rate:      {exp_conf['sample_rate']} Hz")
-    print(f"  Power compress:   {exp_conf['power_compression']}")
+    print(f"  STFT window: {exp_conf['n_fft']} samples ({exp_conf['n_fft']/exp_conf['sample_rate']*1000:.1f} ms)")
+    print(f"  STFT hop: {exp_conf['hop_length']} samples ({exp_conf['hop_length']/exp_conf['sample_rate']*1000:.2f} ms)")
+    print(f"  Frequency bins: {exp_conf['n_fft']//2 + 1}")
+    print(f"  Sample rate: {exp_conf['sample_rate']} Hz")
+    print(f"  Power compress: {exp_conf['power_compression']}")
     
     print("\nTraining Settings:")
-    print(f"  Batch size:       {train_conf['batch_size']}")
-    print(f"  Learning rate:    {train_conf['lr']}")
-    print(f"  Max epochs:       {train_conf['max_n_epochs']}")
-    print(f"  Segment size:     {train_conf['segment_size']} seconds")
-    print(f"  Segment shift:    {train_conf['segment_shift']} seconds")
+    print(f"  Batch size: {train_conf['batch_size']}")
+    print(f"  Learning rate: {train_conf['lr']}")
+    print(f"  Max epochs: {train_conf['max_n_epochs']}")
+    print(f"  Segment size: {train_conf['segment_size']} seconds")
+    print(f"  Segment shift: {train_conf['segment_shift']} seconds")
     
     print("\nData Directories:")
-    print(f"  Train clean:      {TRAIN_CLEAN_DIR}")
-    print(f"  Train noisy:      {TRAIN_NOISY_DIR}")
-    print(f"  Valid clean:      {VALID_CLEAN_DIR}")
-    print(f"  Valid noisy:      {VALID_NOISY_DIR}")
-    print(f"  Test clean:       {TEST_CLEAN_DIR}")
-    print(f"  Test noisy:       {TEST_NOISY_DIR}")
+    print(f"  Train clean: {TRAIN_CLEAN_DIR}")
+    print(f"  Train noisy: {TRAIN_NOISY_DIR}")
+    print(f"  Valid clean: {VALID_CLEAN_DIR}")
+    print(f"  Valid noisy: {VALID_NOISY_DIR}")
+    print(f"  Test clean:  {TEST_CLEAN_DIR}")
+    print(f"  Test noisy:  {TEST_NOISY_DIR}")
     print("="*70 + "\n")
 
 
@@ -232,5 +229,5 @@ if __name__ == '__main__':
     try:
         validate_data_dirs(mode='train')
     except (FileNotFoundError, ValueError) as e:
-        print(f"⚠ Warning: {e}")
-        print("\nPlease update the data directory paths in configs.py")
+        print(f"? Warning: {e}")
+        print("\nPlease update the data directory paths in configs.py") 
