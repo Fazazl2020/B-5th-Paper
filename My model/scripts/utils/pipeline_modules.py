@@ -5,7 +5,7 @@ pipeline_modules.py - CMGAN-Style Audio Processing Pipeline
 MAJOR CHANGES FROM ORIGINAL:
 1. RMS normalization (CMGAN-style)
 2. Power compression (magnitude^0.3)
-3. Uses CMGAN_STFT (PyTorch built-in)
+3. Uses STFT from stft.py (PyTorch built-in wrapper)
 4. Returns 2-channel [real, imag] (not 3-channel)
 5. Returns normalization factors for exact reconstruction
 
@@ -22,7 +22,7 @@ Components:
 
 import torch
 import torch.nn.functional as F
-from utils.cmgan_stft import CMGAN_STFT
+from utils.stft import STFT  # ← CHANGED: Import from stft.py (not cmgan_stft.py)
 
 
 # ==================== POWER COMPRESSION (CMGAN) ====================
@@ -125,7 +125,7 @@ class NetFeeder(object):
     
     def __init__(self, device, n_fft=400, hop_length=100, power=0.3):
         self.device = device
-        self.stft = CMGAN_STFT(n_fft, hop_length, device)
+        self.stft = STFT(n_fft, hop_length, device)  # ← Uses STFT from stft.py
         self.power = power
         self.n_fft = n_fft
         self.hop_length = hop_length
@@ -239,7 +239,7 @@ class Resynthesizer(object):
     
     def __init__(self, device, n_fft=400, hop_length=100, power=0.3):
         self.device = device
-        self.stft = CMGAN_STFT(n_fft, hop_length, device)
+        self.stft = STFT(n_fft, hop_length, device)  # ← Uses STFT from stft.py
         self.power = power
         self.n_fft = n_fft
         self.hop_length = hop_length
