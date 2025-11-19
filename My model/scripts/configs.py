@@ -6,6 +6,7 @@ MODIFICATIONS FOR CMGAN AUDIO PROCESSING:
 - Power compression: 0.3 exponent
 - RMS normalization in forward pass
 - Audio repetition instead of zero padding
+- PESQ evaluation during training (NEW)
 
 COMPATIBILITY:
 - Network designed for 161 frequency bins (n_fft=320 -> 320//2+1=161)
@@ -35,14 +36,14 @@ train_conf = {
     'gpu_ids': '0',  # GPU IDs to use (e.g., '0' or '0,1,2,3')
     
     # Checkpoint settings
-    'ckpt_dir': '/ghome/fewahab/Sun-Models/Ab-5/M4/scripts/ckpt',  # Directory to save checkpoints
-    'est_path': '/gdata/fewahab/Sun-Models/Ab-5/M4/estimates_MA',  # Directory to save estimated audio during testing
+    'ckpt_dir': '/ghome/fewahab/Sun-Models/Ab-5/M5/scripts/ckpt',  # Directory to save checkpoints
+    'est_path': '/gdata/fewahab/Sun-Models/Ab-5/M5/estimates_MA',  # Directory to save estimated audio during testing
     'resume_model': '',  # Path to checkpoint to resume from (empty = train from scratch)
     
     # Optimizer settings
     'lr': 1e-3,         # Initial learning rate
     'clip_norm': 5.0,   # Gradient clipping norm
-    
+     
     # Learning rate scheduler (ReduceLROnPlateau)
     'plateau_factor': 0.5,      # Multiply LR by this when plateau
     'plateau_patience': 3,      # Number of epochs with no improvement before reducing LR
@@ -54,7 +55,7 @@ train_conf = {
     'early_stop_patience': 10,  # Stop if no improvement for this many epochs at min LR
     
     # Data loading settings
-    'batch_size': 4,      # Batch size for training
+    'batch_size': 16,      # Batch size for training
     'num_workers': 4,     # Number of parallel data loading workers
     
     # Data processing mode
@@ -66,12 +67,28 @@ train_conf = {
     # Logging
     'loss_log': 'loss.csv',  # CSV file to log training/validation loss
     'time_log': None,        # Path to detailed timing log (None = print to console)
+    
+    # ==================== PESQ EVALUATION (NEW) ====================
+    'pesq_eval_frequency': 5,   # Evaluate PESQ every N epochs (5 = every 5 epochs)
+                                # Set to 0 to disable PESQ evaluation
+                                # Recommended: 5 for normal training, 2 for careful monitoring, 10 for fast training
+    
+    'pesq_num_samples': 100,    # Number of validation samples for PESQ evaluation
+                                # More samples = more accurate but slower
+                                # 50 samples  ˜ 1 minute
+                                # 100 samples ˜ 2 minutes (recommended)
+                                # 200 samples ˜ 4 minutes
+    
+    'save_best_pesq': True,     # Save best PESQ model separately as 'best_pesq.pt'
+                                # This allows you to keep both best loss and best PESQ models
+    
+    'pesq_log': 'pesq.csv',     # CSV file to log PESQ scores during training
 }
 
 # ==================== TEST CONFIGURATION ====================
 test_conf = {
-    'model_file': './checkpoints/models/best.pt',  # Model checkpoint to use for testing
-    'batch_size': 4,        # Batch size for testing (usually 1)
+    'model_file': './ckpt/models/best_pesq.pt',  # Model checkpoint to use for testing (changed to best_pesq.pt)
+    'batch_size': 1,        # Batch size for testing (changed from 4 to 1 - standard practice)
     'num_workers': 2,       # Number of data loading workers
     'write_ideal': False,   # Whether to write ideal (analysis-synthesis) audio
 }
@@ -209,6 +226,15 @@ def print_config_summary():
     print(f"  Segment size: {train_conf['segment_size']} seconds")
     print(f"  Segment shift: {train_conf['segment_shift']} seconds")
     
+    print("\nPESQ Evaluation:")
+    if train_conf['pesq_eval_frequency'] > 0:
+        print(f"  Enabled: Yes")
+        print(f"  Frequency: Every {train_conf['pesq_eval_frequency']} epochs")
+        print(f"  Samples: {train_conf['pesq_num_samples']}")
+        print(f"  Save best PESQ: {train_conf['save_best_pesq']}")
+    else:
+        print(f"  Enabled: No")
+    
     print("\nData Directories:")
     print(f"  Train clean: {TRAIN_CLEAN_DIR}")
     print(f"  Train noisy: {TRAIN_NOISY_DIR}")
@@ -230,4 +256,4 @@ if __name__ == '__main__':
         validate_data_dirs(mode='train')
     except (FileNotFoundError, ValueError) as e:
         print(f"? Warning: {e}")
-        print("\nPlease update the data directory paths in configs.py") 
+        print("\nPlease update the data directory paths in configs.py")
